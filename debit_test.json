@@ -1,0 +1,58 @@
+{
+  "entries": [
+    {
+      "BankAccountName": "51215000",
+      "AccountingAccount": "51215000",
+      "Label": "CIB:05 - VIR SEPA APICIL PREVOYANCE 550720564227 Decaissement n. APIC",
+      "Direction": "debit",
+      "Debit": 240.1,
+      "Credit": 0,
+      "JournalCode": null,
+      "Counterparts": [
+        {
+          "AccountingAccount": "43701700",
+          "ThirdPartyCode": null,
+          "Label": "CIB:05 - VIR SEPA APICIL PREVOYANCE 550720564227 Decaissement n. APIC",
+          "Debit": 0,
+          "Credit": 240.1
+        }
+      ]
+    },
+    {
+      "BankAccountName": "51215000",
+      "AccountingAccount": "51215000",
+      "Label": "CB FRANFINANCE 123456 FACT 001 M. DUPONT",
+      "Direction": "debit",
+      "Debit": 150.0,
+      "Credit": 0,
+      "JournalCode": null,
+      "Counterparts": [
+        {
+          "AccountingAccount": "45100300",
+          "ThirdPartyCode": "FRAN001",
+          "Label": "CB FRANFINANCE 123456 FACT 001 M. DUPONT",
+          "Debit": 0,
+          "Credit": 150.0
+        }
+      ]
+    },
+    {
+      "BankAccountName": "51215000",
+      "AccountingAccount": "51215000",
+      "Label": "PRLV URSSAF RHONE 123456789",
+      "Direction": "debit",
+      "Debit": 500.0,
+      "Credit": 0,
+      "JournalCode": null,
+      "Counterparts": [
+        {
+          "AccountingAccount": "43701700",
+          "ThirdPartyCode": null,
+          "Label": "PRLV URSSAF RHONE 123456789",
+          "Debit": 0,
+          "Credit": 500.0
+        }
+      ]
+    }
+  ]
+}

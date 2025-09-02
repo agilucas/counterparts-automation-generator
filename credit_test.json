@@ -1,0 +1,40 @@
+{
+  "entries": [
+    {
+      "BankAccountName": "51215000",
+      "AccountingAccount": "51215000",
+      "Label": "VIR CLIENT ABC FACTURE 2024-001",
+      "Direction": "credit",
+      "Debit": 0,
+      "Credit": 1000.0,
+      "JournalCode": null,
+      "Counterparts": [
+        {
+          "AccountingAccount": "41100000",
+          "ThirdPartyCode": "CLI001",
+          "Label": "VIR CLIENT ABC FACTURE 2024-001",
+          "Debit": 1000.0,
+          "Credit": 0
+        }
+      ]
+    },
+    {
+      "BankAccountName": "51215000",
+      "AccountingAccount": "51215000",
+      "Label": "REMB NDF DEPLACEMENT MARTIN",
+      "Direction": "credit",
+      "Debit": 0,
+      "Credit": 250.0,
+      "JournalCode": null,
+      "Counterparts": [
+        {
+          "AccountingAccount": "42100000",
+          "ThirdPartyCode": null,
+          "Label": "REMB NDF DEPLACEMENT MARTIN",
+          "Debit": 250.0,
+          "Credit": 0
+        }
+      ]
+    }
+  ]
+}

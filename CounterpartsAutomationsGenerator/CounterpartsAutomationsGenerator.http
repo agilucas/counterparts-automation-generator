@@ -1,0 +1,115 @@
+@CounterpartsAutomationsGenerator_HostAddress = http://localhost:5146
+
+GET {{CounterpartsAutomationsGenerator_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+### Test de l'API de génération de règles d'automatisation comptable
+
+### Health Check
+GET https://localhost:5001/api/health
+
+### Génération de règles d'automatisation
+POST https://localhost:5001/api/generate-automation-rules
+Content-Type: application/json
+
+{
+  "debitEntries": {
+    "entries": [
+      {
+        "BankAccountName": "51215000",
+        "AccountingAccount": "51215000",
+        "Label": "CIB:05 - VIR SEPA APICIL PREVOYANCE 550720564227 Decaissement n. APIC",
+        "Direction": "debit",
+        "Debit": 240.1,
+        "Credit": 0,
+        "JournalCode": null,
+        "Counterparts": [
+          {
+            "AccountingAccount": "43701700",
+            "ThirdPartyCode": null,
+            "Label": "CIB:05 - VIR SEPA APICIL PREVOYANCE 550720564227 Decaissement n. APIC",
+            "Debit": 0,
+            "Credit": 240.1
+          }
+        ]
+      },
+      {
+        "BankAccountName": "51215000",
+        "AccountingAccount": "51215000",
+        "Label": "CB FRANFINANCE 123456 FACT 001 M. DUPONT",
+        "Direction": "debit",
+        "Debit": 150.0,
+        "Credit": 0,
+        "JournalCode": null,
+        "Counterparts": [
+          {
+            "AccountingAccount": "45100300",
+            "ThirdPartyCode": "FRAN001",
+            "Label": "CB FRANFINANCE 123456 FACT 001 M. DUPONT",
+            "Debit": 0,
+            "Credit": 150.0
+          }
+        ]
+      },
+      {
+        "BankAccountName": "51215000",
+        "AccountingAccount": "51215000",
+        "Label": "PRLV URSSAF RHONE 123456789",
+        "Direction": "debit",
+        "Debit": 500.0,
+        "Credit": 0,
+        "JournalCode": null,
+        "Counterparts": [
+          {
+            "AccountingAccount": "43701700",
+            "ThirdPartyCode": null,
+            "Label": "PRLV URSSAF RHONE 123456789",
+            "Debit": 0,
+            "Credit": 500.0
+          }
+        ]
+      }
+    ]
+  },
+  "creditEntries": {
+    "entries": [
+      {
+        "BankAccountName": "51215000",
+        "AccountingAccount": "51215000",
+        "Label": "VIR CLIENT ABC FACTURE 2024-001",
+        "Direction": "credit",
+        "Debit": 0,
+        "Credit": 1000.0,
+        "JournalCode": null,
+        "Counterparts": [
+          {
+            "AccountingAccount": "41100000",
+            "ThirdPartyCode": "CLI001",
+            "Label": "VIR CLIENT ABC FACTURE 2024-001",
+            "Debit": 1000.0,
+            "Credit": 0
+          }
+        ]
+      },
+      {
+        "BankAccountName": "51215000",
+        "AccountingAccount": "51215000",
+        "Label": "REMB NDF DEPLACEMENT MARTIN",
+        "Direction": "credit",
+        "Debit": 0,
+        "Credit": 250.0,
+        "JournalCode": null,
+        "Counterparts": [
+          {
+            "AccountingAccount": "42100000",
+            "ThirdPartyCode": null,
+            "Label": "REMB NDF DEPLACEMENT MARTIN",
+            "Debit": 250.0,
+            "Credit": 0
+          }
+        ]
+      }
+    ]
+  }
+}
