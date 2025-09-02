@@ -107,7 +107,31 @@ public void GenerateRules_EntityRules_HaveHighConfidence()
 - Banques : `BNP|CREDIT|SOCIETE\s+GENERALE`
 - Entreprises : Noms en majuscules récurrents
 
-### Étape 4 : Patterns d'opérations standardisés
+### Étape 4 : Intégration des codes tiers (ThirdPartyCode)
+**Objectif** : Récupérer et proposer des ThirdPartyCode comme effet à appliquer lors du passage de la règle
+
+**Comportement attendu :**
+- Extraire les ThirdPartyCode existants des contreparties
+- Analyser la cohérence des codes tiers par entité/pattern
+- Proposer le code tiers le plus fréquent comme effet de la règle
+- Inclure le ThirdPartyCode dans les règles générées pour application automatique
+
+**Tests unitaires :**
+```csharp
+[Test]
+public void GenerateRules_ExtractsThirdPartyCodes_FromExistingCounterparts()
+[Test]
+public void GenerateRules_ProposesThirdPartyCode_BasedOnFrequency()
+[Test]
+public void GenerateRules_IncludesThirdPartyCode_AsRuleEffect()
+```
+
+**Logique métier :**
+- Si APICIL apparaît avec ThirdPartyCode "APIC001" dans 80% des cas → règle propose "APIC001"
+- Si BNP PARIBAS a toujours ThirdPartyCode "BNP" → règle propose automatiquement "BNP"
+- Code tiers = effet automatique à appliquer sur la contrepartie lors du passage de la règle
+
+### Étape 5 : Patterns d'opérations standardisés
 **Objectif** : Reconnaître les types d'opérations bancaires
 
 **Comportement attendu :**
@@ -132,7 +156,32 @@ public void GenerateRules_Transfers_CapturesBeneficiary()
 - `VIR\s+(.+?)`
 - `PRLV\s+([A-Z\s]+)`
 
-### Étape 5 : Seuils adaptatifs et validation
+### Étape 6 : Restrictions par compte bancaire (RestrictedBankAccounts)
+**Objectif** : Restreindre certaines règles par BankAccount pour une catégorisation plus fine
+
+**Comportement attendu :**
+- Analyser les patterns par BankAccountName d'origine
+- Créer des règles spécifiques à certains comptes bancaires uniquement
+- Utiliser RestrictedBankAccounts pour limiter l'application de la règle
+- Gérer les cas où même entité → traitement différent selon compte d'origine
+
+**Tests unitaires :**
+```csharp
+[Test]
+public void GenerateRules_RestrictsByBankAccount_ForSpecificPatterns()
+[Test]
+public void GenerateRules_CreatesAccountSpecificRules_ForSameEntity()
+[Test]
+public void GenerateRules_LimitsRuleApplication_ToBankAccounts()
+```
+
+**Cas d'usage pratiques :**
+- Frais CB sur compte dirigeant (512100) → 45100300 (compte courant associé)
+- Frais CB sur compte société (512000) → 62600000 (frais généraux)
+- Même fournisseur mais compte dirigeant → 45100300, compte société → 40110000
+- RestrictedBankAccounts = condition d'application de la règle
+
+### Étape 7 : Seuils adaptatifs et validation
 **Objectif** : Adapter les critères selon le volume de données
 
 **Comportement attendu :**
@@ -156,7 +205,7 @@ public void GenerateRules_CalculatesConfidence_RealisticScores()
 - Dataset 100-500 : seuil 5 occurrences  
 - Dataset >500 : seuil 10 occurrences
 
-### Étape 6 : Optimisation et résolution des conflits
+### Étape 8 : Optimisation et résolution des conflits
 **Objectif** : Règles finales cohérentes et optimales
 
 **Comportement attendu :**

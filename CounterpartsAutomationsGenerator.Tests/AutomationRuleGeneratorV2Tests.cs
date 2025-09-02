@@ -377,6 +377,355 @@ public class AutomationRuleGeneratorV2Tests
 
     #endregion
 
+    #region Step 4: Third party codes integration tests
+
+    [Test]
+    public void GenerateRules_ExtractsThirdPartyCodes_FromExistingCounterparts()
+    {
+        // Arrange
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    CreateEntryWithThirdParty("VIR SEPA APICIL PREVOYANCE", "43701700", "debit", "APIC001"),
+                    CreateEntryWithThirdParty("PRLV APICIL MUTUELLE", "43701700", "debit", "APIC001"),
+                    CreateEntryWithThirdParty("VIR BNP PARIBAS FRAIS", "62700000", "debit", "BNP")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Should().HaveCountGreaterThan(0);
+        
+        // Should extract third party codes from existing counterparts
+        var rulesWithThirdParty = result.Where(r => !string.IsNullOrEmpty(r.ThirdPartyCode)).ToList();
+        rulesWithThirdParty.Should().HaveCountGreaterThan(0);
+    }
+
+    [Test]
+    public void GenerateRules_ProposesThirdPartyCode_BasedOnFrequency()
+    {
+        // Arrange - APICIL with consistent third party code
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    CreateEntryWithThirdParty("VIR SEPA APICIL PREVOYANCE", "43701700", "debit", "APIC001"),
+                    CreateEntryWithThirdParty("PRLV APICIL MUTUELLE", "43701700", "debit", "APIC001"),
+                    CreateEntryWithThirdParty("VIR APICIL RETRAITE", "43701700", "debit", "APIC001")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        var apicilRule = result.FirstOrDefault(r => r.Keyword1?.Contains("APICIL") == true);
+        apicilRule.Should().NotBeNull();
+        apicilRule!.ThirdPartyCode.Should().Be("APIC001"); // Most frequent code should be proposed
+    }
+
+    [Test]
+    public void GenerateRules_IncludesThirdPartyCode_AsRuleEffect()
+    {
+        // Arrange - Multiple entities with different third party codes
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    CreateEntryWithThirdParty("PRLV SEPA CPAM BOUCHES", "43700100", "debit", "CPAM13"),
+                    CreateEntryWithThirdParty("VIR SEPA URSSAF PROVENCE", "43700200", "debit", "URSSAF"),
+                    CreateEntryWithThirdParty("COTISATION CAF MARSEILLE", "43700300", "debit", "CAF13")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // All public institution rules should have third party codes as effects
+        var publicInstitutionRules = result.Where(r => r.RuleName.StartsWith("PublicInstitution_")).ToList();
+        publicInstitutionRules.Should().HaveCountGreaterThan(0);
+        
+        foreach (var rule in publicInstitutionRules)
+        {
+            rule.ThirdPartyCode.Should().NotBeNullOrEmpty("Public institution rules should have third party codes");
+        }
+    }
+
+    #endregion
+
+    #region Step 5: Standardized operation patterns tests
+
+    [Test]
+    public void GenerateRules_BankFees_AssignsCorrectAccount()
+    {
+        // Arrange
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    CreateEntry("FRAIS BANCAIRES TRIMESTRE", "62700000", "debit"),
+                    CreateEntry("COMMISSION VIREMENT SEPA", "62700000", "debit"),
+                    CreateEntry("COTISATION CARTE BLEUE", "62700000", "debit")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // Should detect bank fee operations and assign correct account
+        var bankFeeRules = result.Where(r => r.AccountingAccount == "62700000").ToList();
+        bankFeeRules.Should().HaveCountGreaterThan(0);
+        
+        var bankFeeRule = bankFeeRules.FirstOrDefault(r => 
+            r.Keyword1?.Contains("FRAIS", StringComparison.OrdinalIgnoreCase) == true ||
+            r.RuleName.Contains("BankFees", StringComparison.OrdinalIgnoreCase));
+        bankFeeRule.Should().NotBeNull();
+    }
+
+    [Test]
+    public void GenerateRules_CreditCards_ExtractsKeywords()
+    {
+        // Arrange
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    CreateEntry("CB CARREFOUR MARSEILLE FACT 123 M. MARTIN", "62600000", "debit"),
+                    CreateEntry("CB LECLERC LYON FACT 456 MME DURAND", "45100300", "debit"),
+                    CreateEntry("CB AMAZON FACT 789 MONSIEUR BERNARD", "62600000", "debit")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // Should detect credit card operations
+        var cbRules = result.Where(r => 
+            r.Keyword1?.Contains("CB", StringComparison.OrdinalIgnoreCase) == true ||
+            r.RuleName.Contains("CreditCard", StringComparison.OrdinalIgnoreCase)).ToList();
+        cbRules.Should().HaveCountGreaterThan(0);
+    }
+
+    [Test]
+    public void GenerateRules_Transfers_CapturesBeneficiary()
+    {
+        // Arrange
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    CreateEntry("VIR SEPA FOURNISSEUR DUPONT", "40110000", "debit"),
+                    CreateEntry("VIR SALAIRE EMPLOYE MARTIN", "42100000", "debit"),
+                    CreateEntry("VIR REMBOURSEMENT CLIENT", "41100000", "debit")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // Should detect transfer operations
+        var transferRules = result.Where(r => 
+            r.Keyword1?.Contains("VIR", StringComparison.OrdinalIgnoreCase) == true ||
+            r.RuleName.Contains("Transfer", StringComparison.OrdinalIgnoreCase)).ToList();
+        transferRules.Should().HaveCountGreaterThan(0);
+    }
+
+    [Test]
+    public void GenerateRules_DirectDebits_ExtractsOrganization()
+    {
+        // Arrange
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    CreateEntry("PRLV SEPA EDF ENERGIE", "60611000", "debit"),
+                    CreateEntry("PRLV ORANGE TELECOM", "62600000", "debit"),
+                    CreateEntry("PRLV ASSURANCE MAAF", "61610000", "debit")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // Should detect direct debit operations
+        var directDebitRules = result.Where(r => 
+            r.Keyword1?.Contains("PRLV", StringComparison.OrdinalIgnoreCase) == true ||
+            r.RuleName.Contains("DirectDebit", StringComparison.OrdinalIgnoreCase)).ToList();
+        directDebitRules.Should().HaveCountGreaterThan(0);
+    }
+
+    #endregion
+
+    #region Step 6: Bank account restrictions tests
+
+    [Test]
+    public void GenerateRules_RestrictsByBankAccount_ForSpecificPatterns()
+    {
+        // Arrange - Same transaction type on different bank accounts
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    // CB fees on dirigeant account → should go to compte courant associé
+                    CreateEntryWithBankAccount("FRAIS CB MENSUEL", "45100300", "debit", "512100"),
+                    CreateEntryWithBankAccount("FRAIS CB MENSUEL", "45100300", "debit", "512100"),
+                    // CB fees on société account → should go to frais généraux  
+                    CreateEntryWithBankAccount("FRAIS CB MENSUEL", "62600000", "debit", "512000"),
+                    CreateEntryWithBankAccount("FRAIS CB MENSUEL", "62600000", "debit", "512000")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // Should create bank account specific rules
+        var restrictedRules = result.Where(r => !string.IsNullOrEmpty(r.RestrictedBankAccounts)).ToList();
+        restrictedRules.Should().HaveCountGreaterThan(0);
+        
+        // Should have separate rules for different bank accounts
+        var dirigeantRule = restrictedRules.FirstOrDefault(r => r.RestrictedBankAccounts?.Contains("512100") == true);
+        var societeRule = restrictedRules.FirstOrDefault(r => r.RestrictedBankAccounts?.Contains("512000") == true);
+        
+        dirigeantRule.Should().NotBeNull();
+        societeRule.Should().NotBeNull();
+        
+        // Should have different accounting accounts
+        dirigeantRule.AccountingAccount.Should().Be("45100300");
+        societeRule.AccountingAccount.Should().Be("62600000");
+    }
+
+    [Test]
+    public void GenerateRules_CreatesAccountSpecificRules_ForSameEntity()
+    {
+        // Arrange - Same entity but different treatment based on bank account
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    // URSSAF on dirigeant account
+                    CreateEntryWithBankAccount("PRLV SEPA URSSAF PROVENCE", "45100300", "debit", "512100"),
+                    CreateEntryWithBankAccount("COTISATION URSSAF TRIMESTRE", "45100300", "debit", "512100"),
+                    // URSSAF on société account 
+                    CreateEntryWithBankAccount("PRLV SEPA URSSAF PROVENCE", "40110000", "debit", "512000"),
+                    CreateEntryWithBankAccount("COTISATION URSSAF TRIMESTRE", "40110000", "debit", "512000")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // Should create different rules for same entity on different bank accounts
+        var urssafRules = result.Where(r => r.Keyword1?.Contains("URSSAF") == true).ToList();
+        urssafRules.Should().HaveCountGreaterThan(1);
+        
+        // Should have at least one rule with bank account restriction
+        var restrictedRule = urssafRules.FirstOrDefault(r => !string.IsNullOrEmpty(r.RestrictedBankAccounts));
+        restrictedRule.Should().NotBeNull();
+    }
+
+    [Test]
+    public void GenerateRules_LimitsRuleApplication_ToBankAccounts()
+    {
+        // Arrange - Pattern that should only apply to specific bank accounts
+        var request = new RuleGenerationRequest
+        {
+            DebitEntries = new AccountingEntryFile
+            {
+                Entries = new List<AccountingEntry>
+                {
+                    // CB pattern only on specific account
+                    CreateEntryWithBankAccount("CB CARREFOUR MARSEILLE", "62600000", "debit", "512100"),
+                    CreateEntryWithBankAccount("CB LECLERC PROVENCE", "62600000", "debit", "512100"),
+                    CreateEntryWithBankAccount("CB AMAZON ACHAT", "62600000", "debit", "512100"),
+                    // Other entries on different accounts
+                    CreateEntryWithBankAccount("VIR SEPA FOURNISSEUR DUPONT", "40110000", "debit", "512000")
+                }
+            },
+            CreditEntries = new AccountingEntryFile { Entries = new List<AccountingEntry>() }
+        };
+
+        // Act
+        var result = _generator.GenerateRules(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        
+        // Should create rules with restricted bank accounts when pattern is account-specific
+        var cbRules = result.Where(r => 
+            r.Keyword1?.Contains("CB", StringComparison.OrdinalIgnoreCase) == true).ToList();
+        
+        if (cbRules.Any())
+        {
+            var restrictedCbRule = cbRules.FirstOrDefault(r => !string.IsNullOrEmpty(r.RestrictedBankAccounts));
+            restrictedCbRule?.RestrictedBankAccounts.Should().Contain("512100");
+        }
+    }
+
+    #endregion
+
     #region Test Data Helpers
 
     private RuleGenerationRequest CreateRequestWithEntity(string entityName, string accountingAccount, int frequency)
@@ -417,6 +766,53 @@ public class AutomationRuleGeneratorV2Tests
         {
             BankAccountName = "51215000",
             AccountingAccount = "51215000",
+            Label = label,
+            Direction = direction,
+            Debit = direction == "debit" ? 100m : 0m,
+            Credit = direction == "credit" ? 100m : 0m,
+            Counterparts = new List<Counterpart>
+            {
+                new Counterpart
+                {
+                    AccountingAccount = counterpartAccount,
+                    Label = label,
+                    Debit = direction == "credit" ? 100m : 0m,
+                    Credit = direction == "debit" ? 100m : 0m
+                }
+            }
+        };
+    }
+
+    private AccountingEntry CreateEntryWithThirdParty(string label, string counterpartAccount, string direction, string thirdPartyCode)
+    {
+        return new AccountingEntry
+        {
+            BankAccountName = "51215000",
+            AccountingAccount = "51215000",
+            Label = label,
+            Direction = direction,
+            Debit = direction == "debit" ? 100m : 0m,
+            Credit = direction == "credit" ? 100m : 0m,
+            Counterparts = new List<Counterpart>
+            {
+                new Counterpart
+                {
+                    AccountingAccount = counterpartAccount,
+                    ThirdPartyCode = thirdPartyCode,
+                    Label = label,
+                    Debit = direction == "credit" ? 100m : 0m,
+                    Credit = direction == "debit" ? 100m : 0m
+                }
+            }
+        };
+    }
+
+    private AccountingEntry CreateEntryWithBankAccount(string label, string counterpartAccount, string direction, string bankAccountName)
+    {
+        return new AccountingEntry
+        {
+            BankAccountName = bankAccountName,
+            AccountingAccount = bankAccountName,
             Label = label,
             Direction = direction,
             Debit = direction == "debit" ? 100m : 0m,

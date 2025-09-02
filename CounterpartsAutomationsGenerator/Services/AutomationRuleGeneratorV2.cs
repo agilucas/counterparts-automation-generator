@@ -28,15 +28,24 @@ public class AutomationRuleGeneratorV2
 
         // Enhanced entity extraction with business logic
         var entityCandidates = ExtractBusinessEntities(allEntries, adaptiveThreshold);
+        
+        // Extract operation patterns
+        var operationCandidates = ExtractOperationPatterns(allEntries, adaptiveThreshold);
 
         // Generate rules with improved prioritization
         foreach (var entity in entityCandidates)
         {
-            var rule = CreateEntityRule(entity, priority++, datasetAnalysis);
-            if (rule != null)
-            {
-                rules.Add(rule);
-            }
+            var generatedRules = CreateEntityRules(entity, priority, datasetAnalysis);
+            rules.AddRange(generatedRules);
+            priority += generatedRules.Count;
+        }
+        
+        // Generate operation pattern rules
+        foreach (var operation in operationCandidates)
+        {
+            var operationRules = CreateOperationRules(operation, priority, datasetAnalysis);
+            rules.AddRange(operationRules);
+            priority += operationRules.Count;
         }
 
         return rules.OrderBy(r => r.Priority).ToList();
@@ -129,7 +138,8 @@ public class AutomationRuleGeneratorV2
                         AccountingAccounts = new List<string>(),
                         Direction = entry.Direction,
                         BusinessCategory = DetermineBusinessCategory(entity),
-                        ExampleLabels = new List<string>()
+                        ExampleLabels = new List<string>(),
+                        ThirdPartyCodes = new Dictionary<string, int>()
                     };
                 }
 
@@ -142,12 +152,62 @@ public class AutomationRuleGeneratorV2
                     entityCandidates[entity].ExampleLabels.Add(entry.Label);
                 }
                 
-                // Add counterpart accounting accounts
+                // Add counterpart accounting accounts and third party codes
                 foreach (var counterpart in entry.Counterparts)
                 {
                     if (!entityCandidates[entity].AccountingAccounts.Contains(counterpart.AccountingAccount))
                     {
                         entityCandidates[entity].AccountingAccounts.Add(counterpart.AccountingAccount);
+                    }
+                    
+                    // Track bank account patterns for restrictions
+                    var bankAccountName = entry.BankAccountName ?? string.Empty;
+                    if (!string.IsNullOrEmpty(bankAccountName))
+                    {
+                        if (!entityCandidates[entity].BankAccountPatterns.ContainsKey(bankAccountName))
+                        {
+                            entityCandidates[entity].BankAccountPatterns[bankAccountName] = new BankAccountPattern
+                            {
+                                BankAccount = bankAccountName,
+                                CounterpartAccounts = new List<string>(),
+                                Frequency = 0,
+                                ThirdPartyCodes = new Dictionary<string, int>()
+                            };
+                        }
+
+                        var pattern = entityCandidates[entity].BankAccountPatterns[bankAccountName];
+                        pattern.Frequency++;
+
+                        if (!pattern.CounterpartAccounts.Contains(counterpart.AccountingAccount))
+                        {
+                            pattern.CounterpartAccounts.Add(counterpart.AccountingAccount);
+                        }
+
+                        // Track third party codes per bank account
+                        if (!string.IsNullOrEmpty(counterpart.ThirdPartyCode))
+                        {
+                            if (pattern.ThirdPartyCodes.ContainsKey(counterpart.ThirdPartyCode))
+                            {
+                                pattern.ThirdPartyCodes[counterpart.ThirdPartyCode]++;
+                            }
+                            else
+                            {
+                                pattern.ThirdPartyCodes[counterpart.ThirdPartyCode] = 1;
+                            }
+                        }
+                    }
+                    
+                    // Collect global third party codes
+                    if (!string.IsNullOrEmpty(counterpart.ThirdPartyCode))
+                    {
+                        if (entityCandidates[entity].ThirdPartyCodes.ContainsKey(counterpart.ThirdPartyCode))
+                        {
+                            entityCandidates[entity].ThirdPartyCodes[counterpart.ThirdPartyCode]++;
+                        }
+                        else
+                        {
+                            entityCandidates[entity].ThirdPartyCodes[counterpart.ThirdPartyCode] = 1;
+                        }
                     }
                 }
             }
@@ -223,6 +283,255 @@ public class AutomationRuleGeneratorV2
         };
     }
 
+    private List<OperationCandidate> ExtractOperationPatterns(List<AccountingEntry> entries, int threshold)
+    {
+        var operationCandidates = new Dictionary<string, OperationCandidate>();
+
+        foreach (var entry in entries)
+        {
+            var operationPatterns = DetectOperationPatterns(entry.Label);
+            
+            foreach (var pattern in operationPatterns)
+            {
+                var key = $"{pattern.Type}_{pattern.AccountingAccount}";
+                
+                if (!operationCandidates.ContainsKey(key))
+                {
+                    operationCandidates[key] = new OperationCandidate
+                    {
+                        OperationType = pattern.Type,
+                        Frequency = 0,
+                        AccountingAccounts = new List<string>(),
+                        Direction = entry.Direction,
+                        Keywords = new List<string>(),
+                        ExampleLabels = new List<string>(),
+                        BankAccountPatterns = new Dictionary<string, BankAccountPattern>()
+                    };
+                }
+
+                operationCandidates[key].Frequency++;
+                
+                if (!operationCandidates[key].AccountingAccounts.Contains(pattern.AccountingAccount))
+                {
+                    operationCandidates[key].AccountingAccounts.Add(pattern.AccountingAccount);
+                }
+
+                if (pattern.ExtractedKeyword != null && !operationCandidates[key].Keywords.Contains(pattern.ExtractedKeyword))
+                {
+                    operationCandidates[key].Keywords.Add(pattern.ExtractedKeyword);
+                }
+                
+                if (operationCandidates[key].ExampleLabels.Count < 3 && !operationCandidates[key].ExampleLabels.Contains(entry.Label))
+                {
+                    operationCandidates[key].ExampleLabels.Add(entry.Label);
+                }
+
+                // Track bank account patterns for operations too
+                var bankAccountName = entry.BankAccountName ?? string.Empty;
+                if (!string.IsNullOrEmpty(bankAccountName))
+                {
+                    if (!operationCandidates[key].BankAccountPatterns.ContainsKey(bankAccountName))
+                    {
+                        operationCandidates[key].BankAccountPatterns[bankAccountName] = new BankAccountPattern
+                        {
+                            BankAccount = bankAccountName,
+                            CounterpartAccounts = new List<string>(),
+                            Frequency = 0,
+                            ThirdPartyCodes = new Dictionary<string, int>()
+                        };
+                    }
+
+                    var bankPattern = operationCandidates[key].BankAccountPatterns[bankAccountName];
+                    bankPattern.Frequency++;
+
+                    foreach (var counterpart in entry.Counterparts)
+                    {
+                        if (!bankPattern.CounterpartAccounts.Contains(counterpart.AccountingAccount))
+                        {
+                            bankPattern.CounterpartAccounts.Add(counterpart.AccountingAccount);
+                        }
+                    }
+                }
+            }
+        }
+
+        return operationCandidates.Values
+            .Where(o => o.Frequency >= threshold)
+            .OrderByDescending(o => o.Frequency)
+            .ToList();
+    }
+
+    private List<OperationPattern> DetectOperationPatterns(string label)
+    {
+        var patterns = new List<OperationPattern>();
+
+        // Bank fees pattern
+        if (Regex.IsMatch(label, @"FRAIS.*BANC|COMMISSION|COTISATION", RegexOptions.IgnoreCase))
+        {
+            patterns.Add(new OperationPattern
+            {
+                Type = OperationType.BankFees,
+                AccountingAccount = "62700000",
+                ExtractedKeyword = "FRAIS"
+            });
+        }
+
+        // Credit card pattern
+        var cbMatch = Regex.Match(label, @"CB\s+(.+?)(\s+FACT\s+\d+)?", RegexOptions.IgnoreCase);
+        if (cbMatch.Success)
+        {
+            var merchant = cbMatch.Groups[1].Value.Trim();
+            patterns.Add(new OperationPattern
+            {
+                Type = OperationType.CreditCard,
+                AccountingAccount = DetermineCreditCardAccount(merchant),
+                ExtractedKeyword = "CB"
+            });
+        }
+
+        // Transfer pattern
+        var virMatch = Regex.Match(label, @"VIR\s+(.+)", RegexOptions.IgnoreCase);
+        if (virMatch.Success)
+        {
+            patterns.Add(new OperationPattern
+            {
+                Type = OperationType.Transfer,
+                AccountingAccount = "40110000", // Default for transfers
+                ExtractedKeyword = "VIR"
+            });
+        }
+
+        // Direct debit pattern
+        var prlvMatch = Regex.Match(label, @"PRLV\s+([A-Z\s]+)", RegexOptions.IgnoreCase);
+        if (prlvMatch.Success)
+        {
+            patterns.Add(new OperationPattern
+            {
+                Type = OperationType.DirectDebit,
+                AccountingAccount = DetermineDirectDebitAccount(prlvMatch.Groups[1].Value),
+                ExtractedKeyword = "PRLV"
+            });
+        }
+
+        return patterns;
+    }
+
+    private string DetermineCreditCardAccount(string merchant)
+    {
+        // Default credit card account for most purchases
+        return "62600000"; // Frais généraux
+    }
+
+    private string DetermineDirectDebitAccount(string organization)
+    {
+        // Map common organizations to appropriate accounts
+        var orgUpper = organization.ToUpper();
+        
+        if (orgUpper.Contains("EDF") || orgUpper.Contains("ENERGIE"))
+            return "60611000"; // Électricité
+        
+        if (orgUpper.Contains("ORANGE") || orgUpper.Contains("TELECOM"))
+            return "62600000"; // Télécommunications
+        
+        if (orgUpper.Contains("ASSURANCE") || orgUpper.Contains("MAAF"))
+            return "61610000"; // Assurances
+            
+        return "62600000"; // Default: Frais généraux
+    }
+
+    private List<AutomationRule> CreateOperationRules(OperationCandidate operation, int priority, DatasetAnalysis analysis)
+    {
+        var rules = new List<AutomationRule>();
+        
+        if (operation.AccountingAccounts.Count == 0)
+            return rules;
+
+        // For operations, priority is lower than entities but still important
+        var operationPriority = priority + 50; // Lower priority than entities
+
+        // Create basic operation rule
+        var primaryAccount = operation.AccountingAccounts.First();
+        var mainKeyword = operation.Keywords.FirstOrDefault() ?? operation.OperationType.ToString();
+
+        var rule = new AutomationRule
+        {
+            Priority = operationPriority,
+            CreditOrDebit = operation.Direction,
+            AccountingAccount = primaryAccount,
+            RuleName = $"Operation_{operation.OperationType}_{primaryAccount}",
+            Keyword1 = mainKeyword,
+            MinConfidence = GetOperationConfidence(operation.OperationType),
+            Coverage = operation.Frequency,
+            Precision = 0.85, // Operations have good but not perfect precision
+            Examples = operation.ExampleLabels
+        };
+
+        rules.Add(rule);
+        return rules;
+    }
+
+    private double GetOperationConfidence(OperationType operationType)
+    {
+        return operationType switch
+        {
+            OperationType.BankFees => 0.95,      // Very reliable
+            OperationType.DirectDebit => 0.90,   // Reliable
+            OperationType.CreditCard => 0.85,    // Good
+            OperationType.Transfer => 0.80,      // Good but can vary
+            _ => 0.80
+        };
+    }
+
+    private List<AutomationRule> CreateEntityRules(EntityCandidate entity, int priority, DatasetAnalysis analysis)
+    {
+        var rules = new List<AutomationRule>();
+        
+        if (entity.AccountingAccounts.Count == 0)
+            return rules;
+
+        // Check if entity has different patterns per bank account
+        var bankAccountPatterns = entity.BankAccountPatterns;
+        
+        if (bankAccountPatterns.Count > 1)
+        {
+            // Multiple bank accounts with potentially different counterpart accounts
+            var distinctPatternsByAccount = bankAccountPatterns.Values
+                .Where(p => p.CounterpartAccounts.Count > 0)
+                .GroupBy(p => p.CounterpartAccounts.First()) // Group by first counterpart account
+                .ToList();
+                
+            if (distinctPatternsByAccount.Count > 1)
+            {
+                // Create bank-account-specific rules
+                int currentPriority = priority;
+                foreach (var patternGroup in distinctPatternsByAccount)
+                {
+                    var pattern = patternGroup.First();
+                    var bankAccountsForThisPattern = patternGroup
+                        .Select(p => p.BankAccount)
+                        .ToList();
+                    
+                    var rule = CreateEntityRuleWithBankRestriction(entity, currentPriority, analysis, pattern, bankAccountsForThisPattern);
+                    if (rule != null)
+                    {
+                        rules.Add(rule);
+                        currentPriority++;
+                    }
+                }
+                return rules;
+            }
+        }
+        
+        // Default behavior: single rule without bank account restrictions
+        var defaultRule = CreateEntityRule(entity, priority, analysis);
+        if (defaultRule != null)
+        {
+            rules.Add(defaultRule);
+        }
+        
+        return rules;
+    }
+
     private AutomationRule? CreateEntityRule(EntityCandidate entity, int priority, DatasetAnalysis analysis)
     {
         if (entity.AccountingAccounts.Count == 0)
@@ -237,11 +546,15 @@ public class AutomationRuleGeneratorV2
         // Adjust priority based on business category
         var adjustedPriority = priority - GetBusinessPriority(entity.BusinessCategory);
 
+        // Get the most frequent third party code as rule effect
+        var mostFrequentThirdPartyCode = GetMostFrequentThirdPartyCode(entity);
+
         return new AutomationRule
         {
             Priority = Math.Max(1, adjustedPriority),
             CreditOrDebit = entity.Direction,
             AccountingAccount = primaryAccount,
+            ThirdPartyCode = mostFrequentThirdPartyCode,
             RuleName = $"{entity.BusinessCategory}_{entity.Name}",
             Keyword1 = entity.Name,
             MinConfidence = GetConfidenceByCategory(entity.BusinessCategory),
@@ -249,6 +562,55 @@ public class AutomationRuleGeneratorV2
             Precision = CalculatePrecisionEstimate(entity, analysis),
             Examples = entity.ExampleLabels
         };
+    }
+
+    private AutomationRule? CreateEntityRuleWithBankRestriction(EntityCandidate entity, int priority, DatasetAnalysis analysis, BankAccountPattern pattern, List<string> restrictedBankAccounts)
+    {
+        if (pattern.CounterpartAccounts.Count == 0)
+            return null;
+
+        // Use the primary counterpart account for this pattern
+        var primaryAccount = pattern.CounterpartAccounts.First();
+
+        // Adjust priority based on business category
+        var adjustedPriority = priority - GetBusinessPriority(entity.BusinessCategory);
+
+        // Get the most frequent third party code from this pattern
+        var mostFrequentThirdPartyCode = GetMostFrequentThirdPartyCodeFromPattern(pattern);
+
+        return new AutomationRule
+        {
+            Priority = Math.Max(1, adjustedPriority),
+            CreditOrDebit = entity.Direction,
+            AccountingAccount = primaryAccount,
+            ThirdPartyCode = mostFrequentThirdPartyCode,
+            RuleName = $"{entity.BusinessCategory}_{entity.Name}_{primaryAccount}",
+            Keyword1 = entity.Name,
+            MinConfidence = GetConfidenceByCategory(entity.BusinessCategory),
+            Coverage = pattern.Frequency,
+            Precision = CalculatePrecisionEstimate(entity, analysis),
+            Examples = entity.ExampleLabels.Take(3).ToList(), // Limit examples for restricted rules
+            RestrictedBankAccounts = string.Join(",", restrictedBankAccounts)
+        };
+    }
+
+    private string? GetMostFrequentThirdPartyCodeFromPattern(BankAccountPattern pattern)
+    {
+        if (!pattern.ThirdPartyCodes.Any())
+            return null;
+
+        var mostFrequent = pattern.ThirdPartyCodes
+            .OrderByDescending(kv => kv.Value)
+            .First();
+
+        // Only return if it appears in at least 70% of cases for consistency
+        var consistencyThreshold = pattern.Frequency * 0.7;
+        if (mostFrequent.Value >= consistencyThreshold)
+        {
+            return mostFrequent.Key;
+        }
+
+        return null;
     }
 
     private double GetConfidenceByCategory(BusinessCategory category)
@@ -271,6 +633,26 @@ public class AutomationRuleGeneratorV2
         return Math.Min(0.95, 0.75 + accountConsistency * 0.15 + categoryBonus);
     }
 
+    private string? GetMostFrequentThirdPartyCode(EntityCandidate entity)
+    {
+        if (!entity.ThirdPartyCodes.Any())
+            return null;
+
+        // Get the most frequent third party code
+        var mostFrequent = entity.ThirdPartyCodes
+            .OrderByDescending(kv => kv.Value)
+            .First();
+
+        // Only return if it appears in at least 70% of cases for consistency
+        var consistencyThreshold = entity.Frequency * 0.7;
+        if (mostFrequent.Value >= consistencyThreshold)
+        {
+            return mostFrequent.Key;
+        }
+
+        return null;
+    }
+
     private enum BusinessCategory
     {
         PublicInstitution,
@@ -286,6 +668,16 @@ public class AutomationRuleGeneratorV2
         public string Direction { get; set; } = string.Empty;
         public BusinessCategory BusinessCategory { get; set; }
         public List<string> ExampleLabels { get; set; } = new();
+        public Dictionary<string, int> ThirdPartyCodes { get; set; } = new();
+        public Dictionary<string, BankAccountPattern> BankAccountPatterns { get; set; } = new();
+    }
+
+    private class BankAccountPattern
+    {
+        public string BankAccount { get; set; } = string.Empty;
+        public List<string> CounterpartAccounts { get; set; } = new();
+        public int Frequency { get; set; }
+        public Dictionary<string, int> ThirdPartyCodes { get; set; } = new();
     }
 
     public string ExportToCsv(List<AutomationRule> rules)
@@ -315,5 +707,31 @@ public class AutomationRuleGeneratorV2
         public List<string> UniqueLabels { get; set; } = new();
         public List<string> UniqueAccounts { get; set; } = new();
         public Dictionary<string, int> AccountFrequency { get; set; } = new();
+    }
+
+    private class OperationCandidate
+    {
+        public OperationType OperationType { get; set; }
+        public int Frequency { get; set; }
+        public List<string> AccountingAccounts { get; set; } = new();
+        public string Direction { get; set; } = string.Empty;
+        public List<string> Keywords { get; set; } = new();
+        public List<string> ExampleLabels { get; set; } = new();
+        public Dictionary<string, BankAccountPattern> BankAccountPatterns { get; set; } = new();
+    }
+
+    private class OperationPattern
+    {
+        public OperationType Type { get; set; }
+        public string AccountingAccount { get; set; } = string.Empty;
+        public string? ExtractedKeyword { get; set; }
+    }
+
+    private enum OperationType
+    {
+        BankFees,
+        CreditCard,
+        Transfer,
+        DirectDebit
     }
 }
