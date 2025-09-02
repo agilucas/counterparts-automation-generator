@@ -78,7 +78,7 @@ public class AutomationRuleGeneratorV2
         if (string.IsNullOrWhiteSpace(label))
             return new List<string>();
 
-        // Basic word extraction - look for words with 3+ characters
+        // Enhanced word extraction with scoring
         var words = Regex.Split(label, @"\W+")
             .Where(w => w.Length >= 3)
             .Where(w => !IsGenericWord(w))
@@ -86,7 +86,29 @@ public class AutomationRuleGeneratorV2
             .Distinct()
             .ToList();
 
-        return words;
+        // Score words by discriminating power (longer words, less common patterns get higher scores)
+        var scoredWords = words
+            .Select(w => new { Word = w, Score = CalculateWordScore(w) })
+            .OrderByDescending(w => w.Score)
+            .Select(w => w.Word)
+            .ToList();
+
+        return scoredWords;
+    }
+
+    private double CalculateWordScore(string word)
+    {
+        var score = 0.0;
+        
+        // Length bonus (longer words are more discriminating)
+        score += word.Length * 0.5;
+        
+        // Pattern bonuses
+        if (Regex.IsMatch(word, @"^[A-Z]{2,}$")) score += 2.0; // All caps (company names)
+        if (word.Contains("SARL") || word.Contains("SAS") || word.Contains("SA")) score += 3.0; // Company suffixes
+        if (Regex.IsMatch(word, @"\d")) score -= 1.0; // Numbers reduce discriminating power
+        
+        return Math.Max(0.1, score);
     }
 
     private bool IsGenericWord(string word)
@@ -253,11 +275,11 @@ public class AutomationRuleGeneratorV2
             }
         }
 
-        // If no specific entities found, extract significant words (but deprioritize them)
+        // If no specific entities found, extract significant words
         if (entities.Count == 0)
         {
             var significantWords = ExtractSignificantWords(label);
-            entities.AddRange(significantWords.Take(1)); // Only take the most significant
+            entities.AddRange(significantWords); // Take all significant words
         }
 
         return entities;
@@ -539,6 +561,9 @@ public class AutomationRuleGeneratorV2
         // Get the most frequent third party code as rule effect
         var mostFrequentThirdPartyCode = GetMostFrequentThirdPartyCode(entity);
 
+        // Optimize keywords for maximum coverage and precision
+        var optimizedKeywords = OptimizeKeywordsForEntity(entity, analysis);
+
         return new AutomationRule
         {
             Priority = Math.Max(1, adjustedPriority),
@@ -546,7 +571,10 @@ public class AutomationRuleGeneratorV2
             AccountingAccount = primaryAccount,
             ThirdPartyCode = mostFrequentThirdPartyCode,
             RuleName = $"{entity.BusinessCategory}_{entity.Name}",
-            Keyword1 = entity.Name,
+            Keyword1 = optimizedKeywords.Primary,
+            Keyword2 = optimizedKeywords.Secondary,
+            Keyword3 = optimizedKeywords.Tertiary,
+            KeywordMatching = optimizedKeywords.MatchingMode,
             MinConfidence = GetConfidenceByCategory(entity.BusinessCategory),
             Coverage = entity.Frequency,
             Precision = CalculatePrecisionEstimate(entity, analysis),
@@ -862,6 +890,84 @@ public class AutomationRuleGeneratorV2
         };
     }
 
+    private OptimizedKeywords OptimizeKeywordsForEntity(EntityCandidate entity, DatasetAnalysis analysis)
+    {
+        // Extract all significant words from example labels
+        var allWords = new List<string>();
+        foreach (var example in entity.ExampleLabels)
+        {
+            var words = ExtractSignificantWords(example);
+            allWords.AddRange(words);
+        }
+
+        // Count word frequencies and calculate discriminating power
+        var wordStats = allWords
+            .GroupBy(w => w)
+            .Select(g => new WordStat
+            {
+                Word = g.Key,
+                FrequencyInEntity = g.Count(),
+                Score = CalculateWordScore(g.Key)
+            })
+            .OrderByDescending(w => w.FrequencyInEntity)
+            .ThenByDescending(w => w.Score)
+            .ToList();
+
+        if (!wordStats.Any())
+        {
+            return new OptimizedKeywords
+            {
+                Primary = entity.Name,
+                MatchingMode = KeywordMatchingMode.OneOf
+            };
+        }
+
+        // Select optimal keyword combination
+        var keywords = new OptimizedKeywords
+        {
+            Primary = wordStats.First().Word
+        };
+
+        // Add secondary keyword if it significantly improves precision
+        if (wordStats.Count > 1)
+        {
+            var secondKeyword = wordStats[1];
+            // Only add if it appears in at least 30% of examples
+            if (secondKeyword.FrequencyInEntity >= Math.Max(1, entity.Frequency * 0.3))
+            {
+                keywords.Secondary = secondKeyword.Word;
+                keywords.MatchingMode = KeywordMatchingMode.All; // Both must match for higher precision
+            }
+        }
+
+        // Add tertiary keyword for very high frequency entities
+        if (wordStats.Count > 2 && entity.Frequency >= 10)
+        {
+            var thirdKeyword = wordStats[2];
+            if (thirdKeyword.FrequencyInEntity >= Math.Max(1, entity.Frequency * 0.2))
+            {
+                keywords.Tertiary = thirdKeyword.Word;
+            }
+        }
+
+        return keywords;
+    }
+
+    private class WordStat
+    {
+        public string Word { get; set; } = string.Empty;
+        public int FrequencyInEntity { get; set; }
+        public double Score { get; set; }
+    }
+
+    private class OptimizedKeywords
+    {
+        public string Primary { get; set; } = string.Empty;
+        public string? Secondary { get; set; }
+        public string? Tertiary { get; set; }
+        public KeywordMatchingMode MatchingMode { get; set; } = KeywordMatchingMode.OneOf;
+    }
+
     private bool EntryMatchesRule(AccountingEntry entry, AutomationRule rule)
     {
         // Check direction
@@ -876,13 +982,23 @@ public class AutomationRuleGeneratorV2
                 return false;
         }
 
-        // Check keyword match
-        if (!string.IsNullOrEmpty(rule.Keyword1))
-        {
-            return entry.Label.Contains(rule.Keyword1, StringComparison.OrdinalIgnoreCase);
-        }
+        // Check keyword matching with multiple keywords support
+        var keywords = new[] { rule.Keyword1, rule.Keyword2, rule.Keyword3 }
+            .Where(k => !string.IsNullOrEmpty(k))
+            .ToList();
 
-        return false;
+        if (!keywords.Any())
+            return false;
+
+        var label = entry.Label.ToUpper();
+        var matchCount = keywords.Count(keyword => label.Contains(keyword.ToUpper()));
+
+        return rule.KeywordMatching switch
+        {
+            KeywordMatchingMode.All => matchCount == keywords.Count,
+            KeywordMatchingMode.OneOf => matchCount > 0,
+            _ => matchCount > 0
+        };
     }
 
 
