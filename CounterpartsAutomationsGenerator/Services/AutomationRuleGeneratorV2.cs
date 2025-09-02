@@ -6,6 +6,18 @@ namespace CounterpartsAutomationsGenerator.Services;
 
 public class AutomationRuleGeneratorV2
 {
+    private readonly IAdaptiveThresholdService _thresholdService;
+
+    public AutomationRuleGeneratorV2(IAdaptiveThresholdService thresholdService)
+    {
+        _thresholdService = thresholdService;
+    }
+
+    // Constructor for backward compatibility and tests
+    public AutomationRuleGeneratorV2() : this(new AdaptiveThresholdService())
+    {
+    }
+
     public List<AutomationRule> GenerateRules(RuleGenerationRequest request)
     {
         // Step 1: Basic implementation - handle empty data
@@ -24,7 +36,7 @@ public class AutomationRuleGeneratorV2
 
         // Step 2: Intelligent preliminary analysis
         var datasetAnalysis = PerformDatasetAnalysis(allEntries);
-        var adaptiveThreshold = CalculateAdaptiveThreshold(allEntries.Count);
+        var adaptiveThreshold = _thresholdService.CalculateFrequencyThreshold(allEntries.Count);
 
         // Enhanced entity extraction with business logic
         var entityCandidates = ExtractBusinessEntities(allEntries, adaptiveThreshold);
@@ -48,7 +60,10 @@ public class AutomationRuleGeneratorV2
             priority += operationRules.Count;
         }
 
-        return rules.OrderBy(r => r.Priority).ToList();
+        // Step 7: Apply adaptive thresholds and validation
+        var validatedRules = ApplyAdaptiveValidation(rules, allEntries, datasetAnalysis);
+
+        return validatedRules.OrderBy(r => r.Priority).ToList();
     }
 
     private bool HasValidData(RuleGenerationRequest request)
@@ -107,16 +122,6 @@ public class AutomationRuleGeneratorV2
         };
     }
 
-    private int CalculateAdaptiveThreshold(int datasetSize)
-    {
-        // Adaptive thresholds based on dataset size
-        return datasetSize switch
-        {
-            < 50 => 1,      // Very permissive for small datasets
-            < 200 => 3,     // Moderate for medium datasets
-            _ => 5          // Strict for large datasets
-        };
-    }
 
     private List<EntityCandidate> ExtractBusinessEntities(List<AccountingEntry> entries, int threshold)
     {
@@ -293,7 +298,7 @@ public class AutomationRuleGeneratorV2
             
             foreach (var pattern in operationPatterns)
             {
-                var key = $"{pattern.Type}_{pattern.AccountingAccount}";
+                var key = $"{pattern.Type}";
                 
                 if (!operationCandidates.ContainsKey(key))
                 {
@@ -311,9 +316,13 @@ public class AutomationRuleGeneratorV2
 
                 operationCandidates[key].Frequency++;
                 
-                if (!operationCandidates[key].AccountingAccounts.Contains(pattern.AccountingAccount))
+                // Add accounting accounts from actual data instead of generic ones
+                foreach (var counterpart in entry.Counterparts)
                 {
-                    operationCandidates[key].AccountingAccounts.Add(pattern.AccountingAccount);
+                    if (!operationCandidates[key].AccountingAccounts.Contains(counterpart.AccountingAccount))
+                    {
+                        operationCandidates[key].AccountingAccounts.Add(counterpart.AccountingAccount);
+                    }
                 }
 
                 if (pattern.ExtractedKeyword != null && !operationCandidates[key].Keywords.Contains(pattern.ExtractedKeyword))
@@ -371,7 +380,7 @@ public class AutomationRuleGeneratorV2
             patterns.Add(new OperationPattern
             {
                 Type = OperationType.BankFees,
-                AccountingAccount = "62700000",
+                AccountingAccount = string.Empty, // No generic account
                 ExtractedKeyword = "FRAIS"
             });
         }
@@ -380,11 +389,10 @@ public class AutomationRuleGeneratorV2
         var cbMatch = Regex.Match(label, @"CB\s+(.+?)(\s+FACT\s+\d+)?", RegexOptions.IgnoreCase);
         if (cbMatch.Success)
         {
-            var merchant = cbMatch.Groups[1].Value.Trim();
             patterns.Add(new OperationPattern
             {
                 Type = OperationType.CreditCard,
-                AccountingAccount = DetermineCreditCardAccount(merchant),
+                AccountingAccount = string.Empty, // No generic account
                 ExtractedKeyword = "CB"
             });
         }
@@ -396,19 +404,19 @@ public class AutomationRuleGeneratorV2
             patterns.Add(new OperationPattern
             {
                 Type = OperationType.Transfer,
-                AccountingAccount = "40110000", // Default for transfers
+                AccountingAccount = string.Empty, // No generic account
                 ExtractedKeyword = "VIR"
             });
         }
 
         // Direct debit pattern
-        var prlvMatch = Regex.Match(label, @"PRLV\s+([A-Z\s]+)", RegexOptions.IgnoreCase);
+        var prlvMatch = Regex.Match(label, @"PRLV", RegexOptions.IgnoreCase);
         if (prlvMatch.Success)
         {
             patterns.Add(new OperationPattern
             {
                 Type = OperationType.DirectDebit,
-                AccountingAccount = DetermineDirectDebitAccount(prlvMatch.Groups[1].Value),
+                AccountingAccount = string.Empty, // No generic account
                 ExtractedKeyword = "PRLV"
             });
         }
@@ -416,28 +424,6 @@ public class AutomationRuleGeneratorV2
         return patterns;
     }
 
-    private string DetermineCreditCardAccount(string merchant)
-    {
-        // Default credit card account for most purchases
-        return "62600000"; // Frais généraux
-    }
-
-    private string DetermineDirectDebitAccount(string organization)
-    {
-        // Map common organizations to appropriate accounts
-        var orgUpper = organization.ToUpper();
-        
-        if (orgUpper.Contains("EDF") || orgUpper.Contains("ENERGIE"))
-            return "60611000"; // Électricité
-        
-        if (orgUpper.Contains("ORANGE") || orgUpper.Contains("TELECOM"))
-            return "62600000"; // Télécommunications
-        
-        if (orgUpper.Contains("ASSURANCE") || orgUpper.Contains("MAAF"))
-            return "61610000"; // Assurances
-            
-        return "62600000"; // Default: Frais généraux
-    }
 
     private List<AutomationRule> CreateOperationRules(OperationCandidate operation, int priority, DatasetAnalysis analysis)
     {
@@ -449,6 +435,10 @@ public class AutomationRuleGeneratorV2
         // For operations, priority is lower than entities but still important
         var operationPriority = priority + 50; // Lower priority than entities
 
+        // Only create rules for operations that have actual accounting accounts from data
+        if (operation.AccountingAccounts.Count == 0)
+            return rules;
+
         // Create basic operation rule
         var primaryAccount = operation.AccountingAccounts.First();
         var mainKeyword = operation.Keywords.FirstOrDefault() ?? operation.OperationType.ToString();
@@ -458,7 +448,7 @@ public class AutomationRuleGeneratorV2
             Priority = operationPriority,
             CreditOrDebit = operation.Direction,
             AccountingAccount = primaryAccount,
-            RuleName = $"Operation_{operation.OperationType}_{primaryAccount}",
+            RuleName = $"Operation_{operation.OperationType}_{mainKeyword}",
             Keyword1 = mainKeyword,
             MinConfidence = GetOperationConfidence(operation.OperationType),
             Coverage = operation.Frequency,
@@ -733,5 +723,175 @@ public class AutomationRuleGeneratorV2
         CreditCard,
         Transfer,
         DirectDebit
+    }
+
+    // Step 7: Adaptive validation and quality control
+    private List<AutomationRule> ApplyAdaptiveValidation(List<AutomationRule> rules, List<AccountingEntry> allEntries, DatasetAnalysis analysis)
+    {
+        var validatedRules = new List<AutomationRule>();
+        var datasetSize = allEntries.Count;
+
+        foreach (var rule in rules)
+        {
+            // Calculate realistic confidence score based on coverage and precision
+            var updatedConfidence = CalculateRealisticConfidence(rule, datasetSize);
+            rule.MinConfidence = updatedConfidence;
+
+            // Cross-validate rule precision
+            var crossValidationScore = PerformCrossValidation(rule, allEntries);
+            rule.Precision = crossValidationScore;
+
+            // Apply quality thresholds - eliminate rules below 80% precision
+            // Operation rules have different validation criteria
+            bool shouldIncludeRule = false;
+            
+            if (rule.RuleName.Contains("Operation_"))
+            {
+                // Operation rules: more lenient precision threshold and coverage requirement
+                shouldIncludeRule = rule.Precision >= 0.60 && rule.Coverage >= 1;
+            }
+            else
+            {
+                // Entity rules: standard validation
+                shouldIncludeRule = rule.Precision >= 0.80 && rule.Coverage >= _thresholdService.CalculateMinimumCoverage(datasetSize);
+            }
+            
+            if (shouldIncludeRule)
+            {
+                validatedRules.Add(rule);
+            }
+        }
+
+        // Resolve conflicts and optimize rules
+        return OptimizeRulesForConflicts(validatedRules);
+    }
+
+    private double CalculateRealisticConfidence(AutomationRule rule, int datasetSize)
+    {
+        // Base confidence adjusted by coverage and dataset characteristics
+        var baseConfidence = rule.MinConfidence;
+        var coverageRatio = (double)rule.Coverage / datasetSize;
+        
+        // Higher coverage in larger datasets reduces confidence (more likely to have edge cases)
+        // Lower coverage in smaller datasets is more reliable
+        var datasetAdjustment = datasetSize switch
+        {
+            < 100 => coverageRatio > 0.1 ? 0.05 : -0.02,  // Small: boost high coverage
+            < 500 => coverageRatio > 0.05 ? 0.02 : -0.05, // Medium: modest boost
+            _ => coverageRatio > 0.02 ? -0.02 : -0.08      // Large: penalize high coverage
+        };
+
+        var adjustedConfidence = baseConfidence + datasetAdjustment;
+        return Math.Max(0.70, Math.Min(0.99, adjustedConfidence));
+    }
+
+    private double PerformCrossValidation(AutomationRule rule, List<AccountingEntry> allEntries)
+    {
+        if (string.IsNullOrEmpty(rule.Keyword1))
+            return rule.Precision; // Keep existing precision if no keyword
+
+        // Find all entries that would match this rule
+        var matchingEntries = allEntries.Where(entry => 
+            EntryMatchesRule(entry, rule)).ToList();
+        
+        if (!matchingEntries.Any())
+            return 0.5; // Low precision if no matches found
+
+        // Calculate precision: how many matching entries have the correct accounting account
+        var correctMatches = matchingEntries.Count(entry => 
+            entry.Counterparts.Any(c => c.AccountingAccount == rule.AccountingAccount));
+        
+        var precision = (double)correctMatches / matchingEntries.Count;
+        
+        // Boost precision for high-confidence categories
+        if (rule.RuleName.Contains("PublicInstitution") || rule.RuleName.Contains("Bank"))
+        {
+            precision = Math.Min(0.95, precision + 0.05);
+        }
+        
+        return Math.Max(0.60, precision);
+    }
+
+    private bool EntryMatchesRule(AccountingEntry entry, AutomationRule rule)
+    {
+        // Check direction
+        if (entry.Direction != rule.CreditOrDebit)
+            return false;
+
+        // Check bank account restrictions
+        if (!string.IsNullOrEmpty(rule.RestrictedBankAccounts))
+        {
+            var restrictedAccounts = rule.RestrictedBankAccounts.Split(',').Select(a => a.Trim()).ToList();
+            if (!restrictedAccounts.Contains(entry.BankAccountName ?? ""))
+                return false;
+        }
+
+        // Check keyword match
+        if (!string.IsNullOrEmpty(rule.Keyword1))
+        {
+            return entry.Label.Contains(rule.Keyword1, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+
+    private List<AutomationRule> OptimizeRulesForConflicts(List<AutomationRule> rules)
+    {
+        var optimizedRules = new List<AutomationRule>();
+        var processedKeywords = new HashSet<string>();
+
+        // Group rules by keyword to detect conflicts
+        var rulesByKeyword = rules
+            .Where(r => !string.IsNullOrEmpty(r.Keyword1))
+            .GroupBy(r => r.Keyword1!.ToUpper())
+            .ToList();
+
+        foreach (var keywordGroup in rulesByKeyword)
+        {
+            var keywordRules = keywordGroup.OrderByDescending(r => r.Precision).ToList();
+            
+            if (keywordRules.Count == 1)
+            {
+                // No conflict, add the rule
+                optimizedRules.Add(keywordRules[0]);
+            }
+            else
+            {
+                // Resolve conflicts - prefer higher precision and business priority
+                var bestRule = keywordRules
+                    .OrderByDescending(r => r.Priority <= 20 ? 1 : 0) // Business entities first
+                    .ThenByDescending(r => r.Precision)
+                    .ThenByDescending(r => r.Coverage)
+                    .First();
+                
+                // Only add if precision is significantly better or has business priority
+                if (bestRule.Precision >= 0.85 || bestRule.Priority <= 20)
+                {
+                    optimizedRules.Add(bestRule);
+                }
+                
+                // Check if other rules in the group can be differentiated
+                var remainingRules = keywordRules.Where(r => r != bestRule && r.Precision >= 0.80).ToList();
+                foreach (var remaining in remainingRules)
+                {
+                    // Add rule with different accounting account if precision is high enough
+                    if (remaining.AccountingAccount != bestRule.AccountingAccount && remaining.Precision >= 0.85)
+                    {
+                        remaining.Priority = bestRule.Priority + 1; // Lower priority
+                        optimizedRules.Add(remaining);
+                    }
+                }
+            }
+        }
+
+        // Add rules without keywords (operation patterns)
+        var rulesWithoutKeywords = rules.Where(r => string.IsNullOrEmpty(r.Keyword1)).ToList();
+        optimizedRules.AddRange(rulesWithoutKeywords);
+
+        // Final reordering by priority
+        return optimizedRules
+            .OrderBy(r => r.Priority)
+            .ToList();
     }
 }
