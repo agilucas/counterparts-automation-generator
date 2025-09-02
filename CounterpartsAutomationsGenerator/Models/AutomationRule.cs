@@ -21,6 +21,8 @@ public class AutomationRule
     public double MinConfidence { get; set; }
     public int Coverage { get; set; } // Nombre d'occurrences couvertes
     public double Precision { get; set; } // Précision calculée
+    public double? OverallDatasetPrecision { get; set; } // Précision globale du dataset
+    public double? OverallDatasetCoverage { get; set; } // Coverage global du dataset
     public List<string> Examples { get; set; } = new(); // Stocker les exemples pour la résolution de conflits
 }
 

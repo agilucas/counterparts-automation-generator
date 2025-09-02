@@ -673,7 +673,22 @@ public class AutomationRuleGeneratorV2
     public string ExportToCsv(List<AutomationRule> rules)
     {
         var csv = new StringBuilder();
-        csv.AppendLine("Priority,CreditOrDebit,AccountingAccount,ThirdPartyCode,RuleName,Keyword1,Keyword2,Keyword3,KeywordMatching,RestrictedBankAccounts,MinConfidence");
+        
+        // Add overall metrics as header comments if available
+        if (rules.Any() && rules.First().OverallDatasetPrecision.HasValue)
+        {
+            var firstRule = rules.First();
+            csv.AppendLine($"# === PERFORMANCE GLOBALE DU JEU DE REGLES ===");
+            csv.AppendLine($"# Precision globale: {firstRule.OverallDatasetPrecision.Value:P2}");
+            if (firstRule.OverallDatasetCoverage.HasValue)
+            {
+                csv.AppendLine($"# Coverage global: {firstRule.OverallDatasetCoverage.Value:P2}");
+            }
+            csv.AppendLine($"# Nombre de règles validées: {rules.Count}");
+            csv.AppendLine($"# ============================================");
+        }
+        
+        csv.AppendLine("Priority,CreditOrDebit,AccountingAccount,ThirdPartyCode,RuleName,Keyword1,Keyword2,Keyword3,KeywordMatching,RestrictedBankAccounts,MinConfidence,RulePrecision,Coverage");
 
         foreach (var rule in rules)
         {
@@ -685,7 +700,9 @@ public class AutomationRuleGeneratorV2
                           $"\"{rule.Keyword3 ?? ""}\"," +
                           $"{rule.KeywordMatching.ToString().ToLower()}," +
                           $"\"{rule.RestrictedBankAccounts ?? ""}\"," +
-                          $"{rule.MinConfidence:F2}");
+                          $"{rule.MinConfidence:F2}," +
+                          $"{rule.Precision:F2}," +
+                          $"{rule.Coverage}");
         }
 
         return csv.ToString();
@@ -731,18 +748,19 @@ public class AutomationRuleGeneratorV2
         var validatedRules = new List<AutomationRule>();
         var datasetSize = allEntries.Count;
 
+        // Calculate precision for each rule using the original dataset
         foreach (var rule in rules)
         {
             // Calculate realistic confidence score based on coverage and precision
             var updatedConfidence = CalculateRealisticConfidence(rule, datasetSize);
             rule.MinConfidence = updatedConfidence;
 
-            // Cross-validate rule precision
-            var crossValidationScore = PerformCrossValidation(rule, allEntries);
-            rule.Precision = crossValidationScore;
+            // Validate rule precision against original dataset
+            var precisionValidation = ValidateRulePrecisionAgainstDataset(rule, allEntries);
+            rule.Precision = precisionValidation.Precision;
+            rule.Coverage = precisionValidation.MatchedEntries;
 
-            // Apply quality thresholds - eliminate rules below 80% precision
-            // Operation rules have different validation criteria
+            // Apply quality thresholds - eliminate rules below precision threshold
             bool shouldIncludeRule = false;
             
             if (rule.RuleName.Contains("Operation_"))
@@ -762,6 +780,16 @@ public class AutomationRuleGeneratorV2
             }
         }
 
+        // Calculate overall precision and coverage across all rules
+        var overallMetrics = CalculateOverallMetrics(validatedRules, allEntries);
+        
+        // Store overall metrics for reporting
+        foreach (var rule in validatedRules)
+        {
+            rule.OverallDatasetPrecision = overallMetrics.Precision;
+            rule.OverallDatasetCoverage = overallMetrics.Coverage;
+        }
+        
         // Resolve conflicts and optimize rules
         return OptimizeRulesForConflicts(validatedRules);
     }
@@ -785,19 +813,35 @@ public class AutomationRuleGeneratorV2
         return Math.Max(0.70, Math.Min(0.99, adjustedConfidence));
     }
 
-    private double PerformCrossValidation(AutomationRule rule, List<AccountingEntry> allEntries)
+    private RulePrecisionValidation ValidateRulePrecisionAgainstDataset(AutomationRule rule, List<AccountingEntry> allEntries)
     {
         if (string.IsNullOrEmpty(rule.Keyword1))
-            return rule.Precision; // Keep existing precision if no keyword
+        {
+            return new RulePrecisionValidation
+            {
+                Precision = 0.5,
+                MatchedEntries = 0,
+                CorrectMatches = 0,
+                TotalEntries = allEntries.Count
+            };
+        }
 
-        // Find all entries that would match this rule
+        // Find all entries that would match this rule based on keywords
         var matchingEntries = allEntries.Where(entry => 
             EntryMatchesRule(entry, rule)).ToList();
         
         if (!matchingEntries.Any())
-            return 0.5; // Low precision if no matches found
+        {
+            return new RulePrecisionValidation
+            {
+                Precision = 0.0,
+                MatchedEntries = 0,
+                CorrectMatches = 0,
+                TotalEntries = allEntries.Count
+            };
+        }
 
-        // Calculate precision: how many matching entries have the correct accounting account
+        // Calculate precision: how many matching entries have the expected accounting account
         var correctMatches = matchingEntries.Count(entry => 
             entry.Counterparts.Any(c => c.AccountingAccount == rule.AccountingAccount));
         
@@ -809,7 +853,13 @@ public class AutomationRuleGeneratorV2
             precision = Math.Min(0.95, precision + 0.05);
         }
         
-        return Math.Max(0.60, precision);
+        return new RulePrecisionValidation
+        {
+            Precision = Math.Max(0.0, precision),
+            MatchedEntries = matchingEntries.Count,
+            CorrectMatches = correctMatches,
+            TotalEntries = allEntries.Count
+        };
     }
 
     private bool EntryMatchesRule(AccountingEntry entry, AutomationRule rule)
@@ -893,5 +943,66 @@ public class AutomationRuleGeneratorV2
         return optimizedRules
             .OrderBy(r => r.Priority)
             .ToList();
+    }
+
+    private OverallMetrics CalculateOverallMetrics(List<AutomationRule> rules, List<AccountingEntry> allEntries)
+    {
+        if (!rules.Any() || !allEntries.Any())
+        {
+            return new OverallMetrics { Precision = 0.0, Coverage = 0.0 };
+        }
+
+        var coveredEntries = new HashSet<AccountingEntry>();
+        var totalCorrectMatches = 0;
+        var totalMatches = 0;
+
+        // Pour chaque règle, identifier les entrées qu'elle couvre
+        foreach (var rule in rules)
+        {
+            var validation = ValidateRulePrecisionAgainstDataset(rule, allEntries);
+            totalMatches += validation.MatchedEntries;
+            totalCorrectMatches += validation.CorrectMatches;
+
+            // Ajouter les entrées couvertes par cette règle
+            var matchingEntries = allEntries.Where(entry => EntryMatchesRule(entry, rule));
+            foreach (var entry in matchingEntries)
+            {
+                coveredEntries.Add(entry);
+            }
+        }
+
+        // Calculer la précision globale
+        var precision = totalMatches > 0 ? (double)totalCorrectMatches / totalMatches : 0.0;
+        
+        // Calculer le coverage global : pourcentage d'entrées du dataset couvertes par au moins une règle
+        var coverage = allEntries.Count > 0 ? (double)coveredEntries.Count / allEntries.Count : 0.0;
+
+        return new OverallMetrics
+        {
+            Precision = precision,
+            Coverage = coverage,
+            TotalEntries = allEntries.Count,
+            CoveredEntries = coveredEntries.Count,
+            TotalMatches = totalMatches,
+            CorrectMatches = totalCorrectMatches
+        };
+    }
+
+    private class RulePrecisionValidation
+    {
+        public double Precision { get; set; }
+        public int MatchedEntries { get; set; }
+        public int CorrectMatches { get; set; }
+        public int TotalEntries { get; set; }
+    }
+
+    private class OverallMetrics
+    {
+        public double Precision { get; set; }
+        public double Coverage { get; set; }
+        public int TotalEntries { get; set; }
+        public int CoveredEntries { get; set; }
+        public int TotalMatches { get; set; }
+        public int CorrectMatches { get; set; }
     }
 }
