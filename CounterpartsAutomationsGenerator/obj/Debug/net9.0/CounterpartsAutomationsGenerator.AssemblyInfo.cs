@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CounterpartsAutomationsGenerator")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1556771646cd7ccd6c30367f16f01cd113d60d71")]
 [assembly: System.Reflection.AssemblyProductAttribute("CounterpartsAutomationsGenerator")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CounterpartsAutomationsGenerator")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

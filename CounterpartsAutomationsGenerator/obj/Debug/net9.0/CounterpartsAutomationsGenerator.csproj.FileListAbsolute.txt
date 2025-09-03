@@ -34,3 +34,4 @@
 /Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator/bin/Debug/net9.0/Swashbuckle.AspNetCore.Swagger.dll
 /Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator/bin/Debug/net9.0/Swashbuckle.AspNetCore.SwaggerGen.dll
 /Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator/bin/Debug/net9.0/Swashbuckle.AspNetCore.SwaggerUI.dll
+/Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator/obj/Debug/net9.0/CounterpartsAutomationsGenerator.sourcelink.json

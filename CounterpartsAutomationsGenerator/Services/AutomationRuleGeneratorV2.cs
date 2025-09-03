@@ -728,8 +728,8 @@ public class AutomationRuleGeneratorV2
                           $"\"{rule.Keyword3 ?? ""}\"," +
                           $"{rule.KeywordMatching.ToString().ToLower()}," +
                           $"\"{rule.RestrictedBankAccounts ?? ""}\"," +
-                          $"{rule.MinConfidence:F2}," +
-                          $"{rule.Precision:F2}," +
+                          $"{rule.MinConfidence}," +
+                          $"{rule.Precision}," +
                           $"{rule.Coverage}");
         }
 

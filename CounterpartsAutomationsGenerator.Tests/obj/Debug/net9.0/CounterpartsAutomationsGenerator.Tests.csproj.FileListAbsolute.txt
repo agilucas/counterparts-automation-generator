@@ -114,3 +114,7 @@
 /Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator.Tests/obj/Debug/net9.0/CounterpartsAutomationsGenerator.Tests.pdb
 /Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator.Tests/obj/Debug/net9.0/CounterpartsAutomationsGenerator.Tests.genruntimeconfig.cache
 /Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator.Tests/obj/Debug/net9.0/ref/CounterpartsAutomationsGenerator.Tests.dll
+/Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator.Tests/obj/Debug/net9.0/CounterpartsAutomationsGenerator.Tests.sourcelink.json
+/Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator.Tests/bin/Debug/net9.0/Castle.Core.dll
+/Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator.Tests/bin/Debug/net9.0/NSubstitute.dll
+/Users/lucassoler/Documents/Projects/CounterpartsAutomationsGenerator/CounterpartsAutomationsGenerator.Tests/bin/Debug/net9.0/runtimes/win/lib/net6.0/System.Diagnostics.EventLog.Messages.dll

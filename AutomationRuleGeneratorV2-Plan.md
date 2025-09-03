@@ -265,8 +265,3 @@ public void GenerateRules_FinalOutput_OrderedByPriority()
 - **Tests et validation** : Transversal à chaque étape
 
 **Total estimé : 7-10 heures de développement**
-
-
-
-
-# TODO : Pourquoi prendre UN significant keyword ? Il faut en prendre plusieurs pour être plus précis. De plus c'est là dessus qu'il faut maximiser l'algorithme.
